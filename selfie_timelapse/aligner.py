@@ -1,71 +1,14 @@
-"""Face alignment using similarity transform."""
+"""Face alignment using explicit similarity transform."""
 
 import logging
-from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 
+from .detector import FaceLandmarks
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class CanonicalTemplate:
-    """Target anchor positions for face alignment."""
-
-    left_eye: Tuple[float, float]
-    right_eye: Tuple[float, float]
-    nose_tip: Tuple[float, float]
-
-    @classmethod
-    def from_size(cls, width: int, height: int) -> "CanonicalTemplate":
-        """Create template for given output dimensions.
-
-        Eye spacing is ~30% of frame width, face centered vertically.
-        """
-        return cls(
-            left_eye=(0.35 * width, 0.40 * height),
-            right_eye=(0.65 * width, 0.40 * height),
-            nose_tip=(0.50 * width, 0.58 * height),
-        )
-
-
-def compute_similarity_transform(
-    src_points: np.ndarray, dst_points: np.ndarray
-) -> Optional[np.ndarray]:
-    """Compute similarity transform (scale + rotation + translation) mapping src to dst.
-
-    Args:
-        src_points: Nx2 array of source points
-        dst_points: Nx2 array of destination points
-
-    Returns:
-        2x3 affine transformation matrix, or None if computation fails
-    """
-    if src_points.shape != dst_points.shape or src_points.shape[0] < 2:
-        return None
-
-    matrix, inliers = cv2.estimateAffinePartial2D(
-        src_points.astype(np.float32),
-        dst_points.astype(np.float32),
-        method=cv2.LMEDS,
-    )
-
-    if matrix is None or inliers is None:
-        return None
-
-    # Verify it's a valid similarity transform (no shear)
-    # For similarity: matrix[0,0] == matrix[1,1] and matrix[0,1] == -matrix[1,0]
-    # Allow small numerical errors
-    a, b = matrix[0, 0], matrix[0, 1]
-    c, d = matrix[1, 0], matrix[1, 1]
-
-    if abs(a - d) > 0.1 or abs(b + c) > 0.1:
-        logger.warning("Transform is not a valid similarity transform")
-        return None
-
-    return matrix
 
 
 def warp_image(
@@ -94,36 +37,82 @@ def warp_image(
 
 
 class Aligner:
-    """Aligns faces to a canonical template."""
+    """Aligns faces to a canonical template using explicit similarity transform."""
 
     def __init__(self, output_width: int, output_height: int):
-        self.output_size = (output_width, output_height)
-        self.template = CanonicalTemplate.from_size(output_width, output_height)
-        self.dst_points = np.array(
-            [self.template.left_eye, self.template.right_eye, self.template.nose_tip],
-            dtype=np.float32,
-        )
+        self.output_width = output_width
+        self.output_height = output_height
         logger.debug(
             "Aligner initialized with output size %dx%d", output_width, output_height
         )
 
-    def align(self, image: np.ndarray, landmarks) -> Optional[np.ndarray]:
+    @staticmethod
+    def compute_eye_ratio(landmarks: FaceLandmarks, image_width: int) -> float:
+        """Compute eye-distance to image-width ratio.
+
+        Args:
+            landmarks: Detected face landmarks (pixel coordinates)
+            image_width: Width of the source image in pixels
+
+        Returns:
+            Ratio of eye distance to image width
+        """
+        lx, ly = landmarks.left_eye
+        rx, ry = landmarks.right_eye
+        eye_dist = float(np.hypot(rx - lx, ry - ly))
+        return eye_dist / image_width
+
+    def align(
+        self, image: np.ndarray, landmarks: FaceLandmarks, target_eye_dist: float
+    ) -> Optional[np.ndarray]:
         """Align image so face matches canonical template.
+
+        Uses an explicit similarity transform constructed from the detected eye
+        positions. This guarantees that the eyes are perfectly horizontal and
+        spaced exactly at target_eye_dist.
 
         Args:
             image: Input BGR image
-            landmarks: FaceLandmarks object with left_eye, right_eye, nose_tip
+            landmarks: FaceLandmarks with left_eye, right_eye (pixel coordinates)
+            target_eye_dist: Desired eye distance in the output frame
 
         Returns:
             Aligned image or None if transform fails
         """
-        src_points = np.array(
-            [landmarks.left_eye, landmarks.right_eye, landmarks.nose_tip],
+        lx, ly = landmarks.left_eye
+        rx, ry = landmarks.right_eye
+
+        # Eye center in source image
+        cx = (lx + rx) / 2.0
+        cy = (ly + ry) / 2.0
+
+        # Detected eye distance
+        d = float(np.hypot(rx - lx, ry - ly))
+        if d < 1e-6:
+            logger.warning("Detected eye distance is effectively zero")
+            return None
+
+        # Scale factor to match target eye distance
+        scale = target_eye_dist / d
+
+        # Eye line angle (rotation needed to make eyes horizontal)
+        theta = np.arctan2(ry - ly, rx - lx)
+
+        # Target eye center position (centered horizontally, upper portion vertically)
+        tx = 0.50 * self.output_width
+        ty = 0.40 * self.output_height
+
+        # Build explicit similarity transform matrix:
+        # M = T_target * S * R(-theta) * T_center
+        a = scale * np.cos(theta)
+        b = scale * np.sin(theta)
+
+        matrix = np.array(
+            [
+                [a, b, tx - a * cx - b * cy],
+                [-b, a, ty + b * cx - a * cy],
+            ],
             dtype=np.float32,
         )
 
-        matrix = compute_similarity_transform(src_points, self.dst_points)
-        if matrix is None:
-            return None
-
-        return warp_image(image, matrix, self.output_size)
+        return warp_image(image, matrix, (self.output_width, self.output_height))
