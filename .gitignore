@@ -38,6 +38,7 @@ env/
 *.mp4
 *.mov
 *.avi
+test_photos/
 
 # Output files
 timelapse.mp4
