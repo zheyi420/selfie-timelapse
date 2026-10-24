@@ -12,6 +12,8 @@ from tqdm import tqdm
 
 from .aligner import Aligner
 from .detector import FaceDetector, FaceLandmarks
+from .embedder import FaceEmbedder
+from .identity import lock_protagonist, select_face
 from .sorter import discover_images, sort_images_by_time
 from .video_writer import VideoWriter
 
@@ -104,71 +106,95 @@ def run_pipeline(config: PipelineConfig) -> dict:
     if config.debug_dir:
         config.debug_dir.mkdir(parents=True, exist_ok=True)
 
-    # Initialize detector
+    # Initialize detector and the identity model used for group photos.
     detector = FaceDetector(min_face_size=config.min_face_size)
+    embedder: Optional[FaceEmbedder] = None
 
     stats = {"total": len(sorted_images), "processed": 0, "skipped": 0}
 
-    # ========================================================================
-    # Pass 1: Detect all faces and collect eye-distance ratios
-    # ========================================================================
-    logger.info("Pass 1: Detecting faces and collecting eye ratios...")
-
-    detections: List[Tuple[Path, FaceLandmarks, int, int]] = []
-    ratios: List[float] = []
-
-    for path in tqdm(sorted_images, desc="Detecting"):
-        try:
-            image = cv2.imread(str(path))
-            if image is None:
-                logger.warning("Failed to load image: %s", path.name)
-                stats["skipped"] += 1
-                continue
-
-            h, w = image.shape[:2]
-
-            # Detect face
-            landmarks = detector.detect(image)
-            if landmarks is None:
-                logger.warning("No face detected in %s, skipping", path.name)
-                stats["skipped"] += 1
-                continue
-
-            # Compute eye ratio for this image
-            ratio = Aligner.compute_eye_ratio(landmarks, w)
-            ratios.append(ratio)
-
-            # Cache detection result (lightweight, avoids re-running MediaPipe)
-            detections.append((path, landmarks, w, h))
-
-        except Exception as e:
-            logger.error("Error detecting %s: %s", path.name, e)
-            stats["skipped"] += 1
-
-    if not detections:
-        logger.error("No faces detected in any image")
-        detector.close()
-        return {"total": stats["total"], "processed": 0, "skipped": stats["skipped"], "output_path": None}
-
-    # Compute unified target eye distance from median ratio
-    median_ratio = float(statistics.median(ratios))
-    target_eye_dist = median_ratio * output_width
-
-    logger.info(
-        "Pass 1 complete: %d faces detected, median eye ratio=%.4f, target_eye_dist=%.1f px",
-        len(detections),
-        median_ratio,
-        target_eye_dist,
-    )
-
-    # ========================================================================
-    # Pass 2: Align and encode
-    # ========================================================================
-    logger.info("Pass 2: Aligning frames and writing video...")
-
-    aligner = Aligner(output_width, output_height)
-
     try:
+        embedder = FaceEmbedder()
+        locked = lock_protagonist(sorted_images, detector, embedder)
+
+        # ====================================================================
+        # Pass 1: Detect faces, keep the protagonist, collect eye ratios
+        # ====================================================================
+        logger.info("Pass 1: Detecting faces and collecting eye ratios...")
+
+        detections: List[Tuple[Path, FaceLandmarks, int, int]] = []
+        ratios: List[float] = []
+
+        for path in tqdm(sorted_images, desc="Detecting"):
+            try:
+                cached = locked.cache.get(path)
+                if cached is not None:
+                    faces, w, h = cached
+                    image = None
+                else:
+                    image = cv2.imread(str(path))
+                    if image is None:
+                        logger.warning("Failed to load image: %s", path.name)
+                        stats["skipped"] += 1
+                        continue
+                    h, w = image.shape[:2]
+                    faces = detector.detect(image)
+
+                if not faces:
+                    logger.warning("No face detected in %s, skipping", path.name)
+                    stats["skipped"] += 1
+                    continue
+
+                # Group photos need pixels to embed. Solo photos do not.
+                if len(faces) >= 2 and locked.prototype is not None and image is None:
+                    image = cv2.imread(str(path))
+                    if image is None:
+                        logger.warning("Failed to load image: %s", path.name)
+                        stats["skipped"] += 1
+                        continue
+
+                landmarks = select_face(
+                    faces, image, locked.prototype, embedder, path
+                )
+                if landmarks is None:
+                    stats["skipped"] += 1
+                    continue
+
+                # Eye ratio uses only the face that will be aligned.
+                ratio = Aligner.compute_eye_ratio(landmarks, w)
+                ratios.append(ratio)
+                detections.append((path, landmarks, w, h))
+
+            except Exception as e:
+                logger.error("Error detecting %s: %s", path.name, e)
+                stats["skipped"] += 1
+
+        if not detections:
+            logger.error("No faces detected in any image")
+            return {
+                "total": stats["total"],
+                "processed": 0,
+                "skipped": stats["skipped"],
+                "output_path": None,
+            }
+
+        # Compute unified target eye distance from median ratio
+        median_ratio = float(statistics.median(ratios))
+        target_eye_dist = median_ratio * output_width
+
+        logger.info(
+            "Pass 1 complete: %d faces detected, median eye ratio=%.4f, target_eye_dist=%.1f px",
+            len(detections),
+            median_ratio,
+            target_eye_dist,
+        )
+
+        # ====================================================================
+        # Pass 2: Align and encode
+        # ====================================================================
+        logger.info("Pass 2: Aligning frames and writing video...")
+
+        aligner = Aligner(output_width, output_height)
+
         with VideoWriter(config.output_path, config.fps) as writer:
             for idx, (path, landmarks, w, h) in enumerate(
                 tqdm(detections, desc="Aligning")
@@ -203,6 +229,8 @@ def run_pipeline(config: PipelineConfig) -> dict:
 
     finally:
         detector.close()
+        if embedder is not None:
+            embedder.close()
 
     logger.info(
         "Pipeline complete: %d processed, %d skipped, %d total",

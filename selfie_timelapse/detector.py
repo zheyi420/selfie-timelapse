@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Tuple
 
 import cv2
 import mediapipe as mp
@@ -53,7 +53,6 @@ class FaceDetector:
         """Get or download the face landmarker model."""
         # Try to use the model bundled with mediapipe
         import mediapipe as mp
-        import os
 
         # Check if model file exists in mediapipe package
         package_dir = Path(mp.__file__).parent
@@ -68,27 +67,28 @@ class FaceDetector:
             return str(model_path)
 
         # Download model if not found
-        logger.info("Downloading face landmarker model...")
         url = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
         import urllib.request
 
-        download_path = Path.home() / ".mediapipe" / "face_landmarker.task"
-        download_path.parent.mkdir(parents=True, exist_ok=True)
+        from .runtime_cache import models_dir
+
+        download_path = models_dir() / "face_landmarker.task"
 
         if not download_path.exists():
+            logger.info("Downloading face landmarker model...")
             urllib.request.urlretrieve(url, download_path)
             logger.info("Model downloaded to %s", download_path)
 
         return str(download_path)
 
-    def detect(self, image: np.ndarray) -> Optional[FaceLandmarks]:
-        """Detect face in image and return landmarks.
+    def detect(self, image: np.ndarray) -> List[FaceLandmarks]:
+        """Detect every face large enough to use.
 
-        If multiple faces are detected, selects the largest one by bounding box area.
-        Returns None if no suitable face is found.
+        Returns an empty list when the image has no suitable face.
+        Choosing which face belongs to the protagonist happens later.
         """
         if image is None or image.size == 0:
-            return None
+            return []
 
         # MediaPipe expects RGB
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -101,11 +101,9 @@ class FaceDetector:
         results = self.landmarker.detect(mp_image)
 
         if not results.face_landmarks:
-            return None
+            return []
 
-        best_landmarks = None
-        best_area = 0
-
+        faces: List[FaceLandmarks] = []
         for face_landmarks in results.face_landmarks:
             # Compute bounding box from all landmarks
             xs = [lm.x for lm in face_landmarks]
@@ -125,23 +123,19 @@ class FaceDetector:
             if bbox_w < self.min_face_size or bbox_h < self.min_face_size:
                 continue
 
-            area = bbox_w * bbox_h
-            if area > best_area:
-                best_area = area
-
-                # Extract anchor points
-                left_eye = self._compute_eye_center(face_landmarks, LEFT_EYE_INDICES, w, h)
-                right_eye = self._compute_eye_center(face_landmarks, RIGHT_EYE_INDICES, w, h)
-                nose_tip = self._get_landmark_point(face_landmarks, NOSE_TIP_INDEX, w, h)
-
-                best_landmarks = FaceLandmarks(
+            left_eye = self._compute_eye_center(face_landmarks, LEFT_EYE_INDICES, w, h)
+            right_eye = self._compute_eye_center(face_landmarks, RIGHT_EYE_INDICES, w, h)
+            nose_tip = self._get_landmark_point(face_landmarks, NOSE_TIP_INDEX, w, h)
+            faces.append(
+                FaceLandmarks(
                     left_eye=left_eye,
                     right_eye=right_eye,
                     nose_tip=nose_tip,
                     bbox=(bbox_x, bbox_y, bbox_w, bbox_h),
                 )
+            )
 
-        return best_landmarks
+        return faces
 
     @staticmethod
     def _compute_eye_center(

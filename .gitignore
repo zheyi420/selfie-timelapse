@@ -43,6 +43,9 @@ media/
 # Debug frames
 debug_frames/
 
+# Runtime downloads: face models and the matplotlib font cache
+cache/
+
 # OS files
 .DS_Store
 Thumbs.db

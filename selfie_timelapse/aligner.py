@@ -11,6 +11,49 @@ from .detector import FaceLandmarks
 logger = logging.getLogger(__name__)
 
 
+def similarity_from_eyes(
+    src_left: Tuple[float, float],
+    src_right: Tuple[float, float],
+    dst_left: Tuple[float, float],
+    dst_right: Tuple[float, float],
+) -> Optional[np.ndarray]:
+    """Build a similarity transform that maps one eye pair onto another.
+
+    The matrix is scale, rotation, and translation only. Rotation comes from
+    the angle between the two eye lines. The nose is not used.
+    """
+    slx, sly = src_left
+    srx, sry = src_right
+    dlx, dly = dst_left
+    drx, dry = dst_right
+
+    src_dist = float(np.hypot(srx - slx, sry - sly))
+    dst_dist = float(np.hypot(drx - dlx, dry - dly))
+    if src_dist < 1e-6 or dst_dist < 1e-6:
+        logger.warning("Eye distance is effectively zero")
+        return None
+
+    scale = dst_dist / src_dist
+    rho = float(np.arctan2(dry - dly, drx - dlx) - np.arctan2(sry - sly, srx - slx))
+    cos_r = float(np.cos(rho))
+    sin_r = float(np.sin(rho))
+    a = scale * cos_r
+    b = scale * sin_r
+
+    scx = (slx + srx) / 2.0
+    scy = (sly + sry) / 2.0
+    dcx = (dlx + drx) / 2.0
+    dcy = (dly + dry) / 2.0
+
+    return np.array(
+        [
+            [a, -b, dcx - a * scx + b * scy],
+            [b, a, dcy - b * scx - a * scy],
+        ],
+        dtype=np.float32,
+    )
+
+
 def warp_image(
     image: np.ndarray,
     transform_matrix: np.ndarray,
@@ -79,40 +122,18 @@ class Aligner:
         Returns:
             Aligned image or None if transform fails
         """
-        lx, ly = landmarks.left_eye
-        rx, ry = landmarks.right_eye
-
-        # Eye center in source image
-        cx = (lx + rx) / 2.0
-        cy = (ly + ry) / 2.0
-
-        # Detected eye distance
-        d = float(np.hypot(rx - lx, ry - ly))
-        if d < 1e-6:
-            logger.warning("Detected eye distance is effectively zero")
-            return None
-
-        # Scale factor to match target eye distance
-        scale = target_eye_dist / d
-
-        # Eye line angle (rotation needed to make eyes horizontal)
-        theta = np.arctan2(ry - ly, rx - lx)
-
-        # Target eye center position (centered horizontally, upper portion vertically)
+        # Target eye center: centered horizontally, upper portion vertically.
+        # Destination eyes stay horizontal and target_eye_dist apart.
         tx = 0.50 * self.output_width
         ty = 0.40 * self.output_height
-
-        # Build explicit similarity transform matrix:
-        # M = T_target * S * R(-theta) * T_center
-        a = scale * np.cos(theta)
-        b = scale * np.sin(theta)
-
-        matrix = np.array(
-            [
-                [a, b, tx - a * cx - b * cy],
-                [-b, a, ty + b * cx - a * cy],
-            ],
-            dtype=np.float32,
+        half = target_eye_dist / 2.0
+        matrix = similarity_from_eyes(
+            landmarks.left_eye,
+            landmarks.right_eye,
+            (tx - half, ty),
+            (tx + half, ty),
         )
+        if matrix is None:
+            return None
 
         return warp_image(image, matrix, (self.output_width, self.output_height))

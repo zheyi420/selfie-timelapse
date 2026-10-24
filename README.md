@@ -26,6 +26,8 @@ uv sync
 uv run python -m selfie_timelapse media/photos --fps 10
 ```
 
+The first run downloads face models into `cache/` in this repository. That directory is gitignored.
+
 ## Usage
 
 ```bash
@@ -70,7 +72,7 @@ python -m selfie_timelapse media/photos --width 1280 --height 720
 ## How It Works
 
 1. **Scan & Sort**: Discovers all photos in the input directory and sorts them by capture time
-2. **Detect Faces**: For each photo, detects facial landmarks using MediaPipe
+2. **Detect Faces**: For each photo, detects facial landmarks using MediaPipe. A short, time-spread sample of single-face photos decides who the video follows. In a group photo, the face most similar to that person is kept; if that person is missing, the photo is skipped
 3. **Align**: Computes a similarity transform (scale + rotate + translate) from the two eye centers so the eyes stay level and the same distance apart
 4. **Render**: Warps each photo onto a consistent canvas and writes frames to an H.264 MP4 video
 5. **Skip Bad Frames**: Photos without detectable faces are skipped with a warning logged
