@@ -2,10 +2,25 @@
 
 import argparse
 import logging
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from .pipeline import PipelineConfig, run_pipeline
+
+VIDEOS_DIR = Path("media") / "videos"
+_STAMPED_NAME = re.compile(r"-\d{8}-\d{6}$")
+
+
+def resolve_output_path(output: Optional[Path], now: Optional[datetime] = None) -> Path:
+    """Place every video in media/videos and append a local timestamp to the name."""
+    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    stem = output.stem if output is not None and output.stem else "timelapse"
+    if _STAMPED_NAME.search(stem) is None:
+        stem = f"{stem}-{stamp}"
+    return VIDEOS_DIR / f"{stem}.mp4"
 
 
 def setup_logging(level: str):
@@ -33,8 +48,8 @@ def main():
         "-o",
         "--output",
         type=Path,
-        default=Path("./timelapse.mp4"),
-        help="Output video path (default: ./timelapse.mp4)",
+        default=None,
+        help="Output name (default: timelapse). Saved as media/videos/<name>-YYYYMMDD-HHMMSS.mp4",
     )
     parser.add_argument(
         "--fps",
@@ -74,6 +89,7 @@ def main():
     )
 
     args = parser.parse_args()
+    args.output = resolve_output_path(args.output)
     setup_logging(args.log_level)
 
     # Validate input directory

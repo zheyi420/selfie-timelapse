@@ -22,8 +22,8 @@ cd selfie-timelapse
 # Create .venv and install dependencies
 uv sync
 
-# Run
-uv run python -m selfie_timelapse <input_dir> --fps 10 -o test.mp4
+# Put source photos in media/photos, then run
+uv run python -m selfie_timelapse media/photos --fps 10
 ```
 
 ## Usage
@@ -36,8 +36,8 @@ python -m selfie_timelapse <input_dir> [options]
 
 | Argument | Description | Default |
 |----------|-------------|---------|
-| `input_dir` | Directory containing your selfie photos | (required) |
-| `-o, --output` | Output video path | `./timelapse.mp4` |
+| `input_dir` | Directory containing your selfie photos. This repository uses `media/photos` | (required) |
+| `-o, --output` | Output name. Saved as `media/videos/<name>-YYYYMMDD-HHMMSS.mp4` | `timelapse` |
 | `--fps` | Frames per second | `10` |
 | `--width` | Output video width | Mode of input widths |
 | `--height` | Output video height | Mode of input heights |
@@ -49,16 +49,16 @@ python -m selfie_timelapse <input_dir> [options]
 
 ```bash
 # Basic usage
-python -m selfie_timelapse ./my_selfies
+python -m selfie_timelapse media/photos
 
-# Custom FPS and output path
-python -m selfie_timelapse ./my_selfies --fps 15 -o ./output/year2023.mp4
+# Custom FPS and output name (media/videos/year2023-YYYYMMDD-HHMMSS.mp4)
+python -m selfie_timelapse media/photos --fps 15 -o year2023
 
 # Save debug frames to inspect alignment quality
-python -m selfie_timelapse ./my_selfies --debug-dir ./debug_frames
+python -m selfie_timelapse media/photos --debug-dir ./debug_frames
 
 # Force output resolution
-python -m selfie_timelapse ./my_selfies --width 1280 --height 720
+python -m selfie_timelapse media/photos --width 1280 --height 720
 ```
 
 ## Supported Photo Formats

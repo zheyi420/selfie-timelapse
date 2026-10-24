@@ -18,7 +18,7 @@
 
 ```bash
 uv sync
-uv run python -m selfie_timelapse <input_dir> --fps 10 -o test.mp4
+uv run python -m selfie_timelapse media/photos --fps 10
 ```
 
 改过依赖后再执行：
@@ -49,14 +49,17 @@ uv sync
   5. 文件名 `WIN_YYYYMMDD_HH_MM_SS_Pro`
   6. 文件修改时间（`os.path.getmtime`）
 - 只读取 `.jpg`、`.jpeg`、`.png`。视频和 ini 等其他文件忽略。
-- 照片、输出视频和 `debug_frames/` 不提交。`test_photos/` 保持被 git 忽略。
+- 照片、输出视频和 `debug_frames/` 不提交。`media/` 保持被 git 忽略。
+- 用于生成视频的照片放在 `media/photos/`。不要再使用 `test_photos/`。
+- 生成的视频一律写到 `media/videos/`。文件名带本地时间戳 `YYYYMMDD-HHMMSS`，默认是 `media/videos/timelapse-YYYYMMDD-HHMMSS.mp4`。`-o` 只改名称，不改目录，例如 `-o test` 得到 `media/videos/test-YYYYMMDD-HHMMSS.mp4`。不要把视频写到仓库根目录或其他目录。
+- 安装时只打包 `selfie_timelapse`。`pyproject.toml` 里的 `[tool.setuptools.packages.find]` 保持 `include = ["selfie_timelapse*"]`，避免 `media/`、`debug_frames/` 被 setuptools 当成包。
 
 ## 测试
 
 仓库没有自动化测试。改了对齐或排序之后，用少量照片（约 10–20 张）运行：
 
 ```bash
-uv run python -m selfie_timelapse <temp_dir> --fps 10 -o test.mp4
+uv run python -m selfie_timelapse <temp_dir> --fps 10
 ```
 
 完成前确认：
