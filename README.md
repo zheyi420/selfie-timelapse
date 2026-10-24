@@ -12,19 +12,18 @@ Generate face-aligned timelapse videos from your selfie photos.
 
 ## Installation
 
-Requires Python 3.9+ and Anaconda.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11. `uv sync` installs that Python if it is missing, and installs dependencies into `.venv` in this repository.
 
 ```bash
 # Clone the repository
 git clone https://github.com/zheyi420/selfie-timelapse.git
 cd selfie-timelapse
 
-# Create conda environment
-conda create -n selfie-timelapse python=3.11
-conda activate selfie-timelapse
+# Create .venv and install dependencies
+uv sync
 
-# Install dependencies
-pip install -r requirements.txt
+# Run
+uv run python -m selfie_timelapse <input_dir> --fps 10 -o test.mp4
 ```
 
 ## Usage
@@ -71,11 +70,13 @@ python -m selfie_timelapse ./my_selfies --width 1280 --height 720
 ## How It Works
 
 1. **Scan & Sort**: Discovers all photos in the input directory and sorts them by capture time
-2. **Detect Faces**: For each photo, detects facial landmarks (eyes, nose, mouth) using MediaPipe
-3. **Align**: Computes a similarity transform (scale + rotate + translate) to map each face to a canonical template
+2. **Detect Faces**: For each photo, detects facial landmarks using MediaPipe
+3. **Align**: Computes a similarity transform (scale + rotate + translate) from the two eye centers so the eyes stay level and the same distance apart
 4. **Render**: Warps each photo onto a consistent canvas and writes frames to an H.264 MP4 video
 5. **Skip Bad Frames**: Photos without detectable faces are skipped with a warning logged
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
+
+Coding agents: see [AGENTS.md](AGENTS.md).

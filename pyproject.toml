@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
-    {name = "zheyi420", url = "https://github.com/zheyi420"}
+    {name = "zheyi420"}
 ]
 keywords = ["selfie", "timelapse", "face-alignment", "video"]
 classifiers = [
